@@ -1,0 +1,36 @@
+name: Auto Token Refresh
+
+on:
+  schedule:
+    - cron: '0 */8 * * *' # প্রতি ৮ ঘণ্টা পর পর চলবে
+  workflow_dispatch:      # ম্যানুয়ালি রান করার অপশন
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests
+
+      - name: Run Token Refresh
+        run: |
+          python refresh_tokens.py
+
+      - name: Commit and Push Updated Tokens
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add token_bd.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto refresh token_bd.json" && git push)
