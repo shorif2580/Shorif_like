@@ -1,8 +1,7 @@
-Flask
+Flask[async]
 requests
 aiohttp
 googleapis-common-protos
 pycryptodome
 protobuf
 Werkzeug
-PyJWT
