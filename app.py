@@ -79,7 +79,8 @@ async def send_request(encrypted_uid, token, url):
             "X-GA": "v1 1",
             "ReleaseVersion": "OB55"
         }
-        async with aiohttp.ClientSession() as session:
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(url, data=edata, headers=headers) as response:
                 return await response.text()
     except Exception as e:
