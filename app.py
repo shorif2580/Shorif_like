@@ -11,12 +11,17 @@ import uid_generator_pb2
 import visit_count_pb2
 from google.protobuf.message import DecodeError
 from collections import OrderedDict
+import urllib3
+
+# SSL warning hide
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
 # ✅ Valid API keys
 VALID_API_KEYS = {
-    "terrorshorif"  # don't change warna api or bot dono nhi chalega 
+    "terrorshorif",
+    "Ajay"
 }
 
 # 🔢 Like limit tracking
@@ -65,7 +70,7 @@ def create_protobuf_message(user_id, region):
         return None
 
 
-async def send_request(encrypted_uid, token, url):
+async def send_request(session, encrypted_uid, token, url):
     try:
         edata = bytes.fromhex(encrypted_uid)
         headers = {
@@ -79,13 +84,10 @@ async def send_request(encrypted_uid, token, url):
             "X-GA": "v1 1",
             "ReleaseVersion": "OB55"
         }
-        connector = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.post(url, data=edata, headers=headers) as response:
-                return await response.text()
+        async with session.post(url, data=edata, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as response:
+            return await response.text()
     except Exception as e:
-        app.logger.error(f"Exception in send_request: {e}")
-        return None
+        return f"ERR: {str(e)}"
 
 
 async def send_multiple_requests(uid, region, url):
@@ -97,14 +99,19 @@ async def send_multiple_requests(uid, region, url):
         if encrypted_uid is None:
             return None
         tokens = load_tokens(region)
-        if tokens is None:
+        if tokens is None or len(tokens) == 0:
             return None
-        tasks = []
-        for i in range(100):
-            token = tokens[i % len(tokens)]["token"]
-            tasks.append(send_request(encrypted_uid, token, url))
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return results
+
+        # ✅ SSL Bypass এবং এক সেশনে ফাস্ট রিকোয়েস্ট পাঠানো
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            tasks = []
+            count = min(100, len(tokens))  # টোকেন সংখ্যার ওপর ভিত্তি করে রিকোয়েস্ট
+            for i in range(count):
+                token = tokens[i]["token"]
+                tasks.append(send_request(session, encrypted_uid, token, url))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            return results
     except Exception as e:
         app.logger.error(f"Exception in send_multiple_requests: {e}")
         return None
@@ -136,6 +143,7 @@ def make_request(encrypt, region, token):
             url = "https://client.us.freefiremobile.com/GetPlayerPersonalShow"
         else:
             url = "https://clientbp.ppmainecoonghj.com/GetPlayerPersonalShow"
+
         edata = bytes.fromhex(encrypt)
         headers = {
             "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)",
@@ -148,7 +156,7 @@ def make_request(encrypt, region, token):
             "X-GA": "v1 1",
             "ReleaseVersion": "OB55"
         }
-        response = requests.post(url, data=edata, headers=headers, verify=False)
+        response = requests.post(url, data=edata, headers=headers, verify=False, timeout=10)
         binary = response.content
         decoded = visit_count_pb2.Info()
         decoded.ParseFromString(binary)
@@ -163,9 +171,8 @@ def make_request(encrypt, region, token):
 
 @app.route('/like', methods=['GET'])
 def handle_requests():
-    global used_count  # ✅ fix added
+    global used_count
 
-    # ✅ API key check
     api_key = request.args.get("key")
     if api_key not in VALID_API_KEYS:
         result = OrderedDict([
@@ -184,75 +191,73 @@ def handle_requests():
         return {"error": "UID and region are required"}, 400
 
     try:
-        def process_request():
-            global used_count  # ✅ fix added again (for nested function)
+        tokens = load_tokens(region)
+        if not tokens:
+            raise Exception("Failed to load tokens.")
+        token = tokens[0]['token']
+        encrypted_uid = enc(uid)
+        if encrypted_uid is None:
+            raise Exception("Encryption of UID failed.")
 
-            tokens = load_tokens(region)
-            if not tokens:
-                raise Exception("Failed to load tokens.")
-            token = tokens[0]['token']
-            encrypted_uid = enc(uid)
-            if encrypted_uid is None:
-                raise Exception("Encryption of UID failed.")
-            before = make_request(encrypted_uid, region, token)
-            if before is None:
-                raise Exception("Failed to get initial info.")
-            before_like = before.AccountInfo.Likes
+        before = make_request(encrypted_uid, region, token)
+        if before is None:
+            raise Exception("Failed to get initial info.")
+        before_like = before.AccountInfo.Likes
 
-            if region == "IND":
-                url = "https://client.ind.freefiremobile.com/LikeProfile"
-            elif region in {"BR", "US", "SAC", "NA"}:
-                url = "https://client.us.freefiremobile.com/LikeProfile"
-            else:
-                url = "https://clientbp.ppmainecoonghj.com/LikeProfile"
+        if region == "IND":
+            url = "https://client.ind.freefiremobile.com/LikeProfile"
+        elif region in {"BR", "US", "SAC", "NA"}:
+            url = "https://client.us.freefiremobile.com/LikeProfile"
+        else:
+            url = "https://clientbp.ppmainecoonghj.com/LikeProfile"
 
-            asyncio.run(send_multiple_requests(uid, region, url))
+        # লাইক রিকোয়েস্ট পাঠানো
+        like_results = asyncio.run(send_multiple_requests(uid, region, url))
 
-            after = make_request(encrypted_uid, region, token)
-            if after is None:
-                raise Exception("Failed to get final info.")
-            after_like = after.AccountInfo.Likes
-            like_given = after_like - before_like
-            status = 1 if like_given > 0 else 2
+        after = make_request(encrypted_uid, region, token)
+        if after is None:
+            raise Exception("Failed to get final info.")
+        after_like = after.AccountInfo.Likes
+        like_given = after_like - before_like
+        status = 1 if like_given > 0 else 2
 
-            # ✅ Count only when successful (status == 1)
-            if status == 1:
-                used_count += 1
+        if status == 1:
+            used_count += 1
 
-            remaining = max(daily_limit - used_count, 0)
+        remaining = max(daily_limit - used_count, 0)
 
-            result = OrderedDict([
-                ("LikesGivenByAPI", like_given),
-                ("LikesafterCommand", after_like),
-                ("LikesbeforeCommand", before_like),
-                ("PlayerNickname", after.AccountInfo.PlayerNickname),
-                ("Level", after.AccountInfo.Levels),
-                ("Region", after.AccountInfo.PlayerRegion),
-                ("UID", after.AccountInfo.UID),
-                ("status", status),
-                ("daily_limit", daily_limit),
-                ("used", used_count),
-                ("remaining", remaining)
-            ])
+        # সার্ভার কী উত্তর দিলো তার স্যাম্পল (ডিবাগিংয়ের জন্য)
+        sample_res = str(like_results[0])[:80] if like_results and len(like_results) > 0 else "None"
 
-            return app.response_class(
-                response=json.dumps(result, separators=(',', ':')),
-                status=200,
-                mimetype='application/json'
-            )
+        result = OrderedDict([
+            ("LikesGivenByAPI", like_given),
+            ("LikesafterCommand", after_like),
+            ("LikesbeforeCommand", before_like),
+            ("PlayerNickname", after.AccountInfo.PlayerNickname),
+            ("Level", after.AccountInfo.Levels),
+            ("Region", after.AccountInfo.PlayerRegion),
+            ("UID", after.AccountInfo.UID),
+            ("status", status),
+            ("daily_limit", daily_limit),
+            ("used", used_count),
+            ("remaining", remaining),
+            ("server_raw_response", sample_res)
+        ])
 
-        return process_request()
+        return app.response_class(
+            response=json.dumps(result, separators=(',', ':')),
+            status=200,
+            mimetype='application/json'
+        )
 
     except Exception as e:
         app.logger.error(f"Error: {e}")
         return {"error": str(e)}, 500
 
 
-# 🆕 /remain endpoint
 @app.route('/remain', methods=['GET'])
 def remain_info():
-    global used_count  # ✅ fix added
-
+    global used_count
     remaining = max(daily_limit - used_count, 0)
     data = {
         "daily_limit": daily_limit,
