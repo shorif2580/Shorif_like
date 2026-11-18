@@ -9,10 +9,12 @@ import requests
 UID_FILE = Path("Uid_bd.json")
 TOKEN_FILE = Path("token_bd.json")
 
-# ✅ স্ক্রিনশটের দুটি API এবং Key ডিফল্ট হিসেবে যুক্ত
-API_URL_1 = os.getenv("JWT_API_URL_1", "https://flash-token-api.vercel.app/token")
+# ✅ শুধু API এবং আলাদা Key কনফিগারেশন আপডেট করা হয়েছে
+API_URL_1 = os.getenv("JWT_API_URL_1", "https://shorif-token-v1.vercel.app/token")
+API_KEY_1 = os.getenv("JWT_API_KEY_1", "Shorif")
+
 API_URL_2 = os.getenv("JWT_API_URL_2", "https://flash-token-v2.vercel.app/token")
-API_KEY = os.getenv("JWT_API_KEY", "Flash")
+API_KEY_2 = os.getenv("JWT_API_KEY_2", "Flash")
 
 
 def extract_token(data):
@@ -79,10 +81,13 @@ def main():
                 print(f"[{worker_name}] [{idx+1}/{total_accs}] FAILED: missing uid/password", file=sys.stderr)
             return
 
+        # কোন এপিআই কল হচ্ছে তার ওপর ভিত্তি করে সঠিক Key সেট করা
+        current_key = API_KEY_1 if api_url == API_URL_1 else API_KEY_2
+
         params = {
             "uid": uid,
             "password": password,
-            "key": API_KEY
+            "key": current_key
         }
         headers = {
             "Accept": "application/json",
